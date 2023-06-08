@@ -95,7 +95,6 @@ impl<T> Default for JoinSet<T> {
     }
 }
 
-
 impl<T> fmt::Debug for JoinSet<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO: add active tasks and queued tasks here
