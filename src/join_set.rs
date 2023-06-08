@@ -1,4 +1,4 @@
-use std::{future::Future, marker::PhantomData};
+use std::{fmt, future::Future, marker::PhantomData};
 
 use crate::{AbortHandle, Handle, JoinError, LocalSet};
 
@@ -80,5 +80,25 @@ impl<T: 'static> JoinSet<T> {
 
     pub fn detach_all(&mut self) {
         unimplemented!()
+    }
+}
+
+impl<T> Drop for JoinSet<T> {
+    fn drop(&mut self) {
+        //TODO:
+    }
+}
+
+impl<T> Default for JoinSet<T> {
+    fn default() -> Self {
+        unimplemented!()
+    }
+}
+
+
+impl<T> fmt::Debug for JoinSet<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // TODO: add active tasks and queued tasks here
+        f.debug_struct("JoinSet").field("len", &self.len()).finish()
     }
 }
