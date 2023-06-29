@@ -5,11 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use tokio::{
-    sync::Semaphore,
-    task::JoinSet as TokioJoinSet,
-    task::AbortHandle,
-};
+use tokio::{sync::Semaphore, task::AbortHandle, task::JoinSet as TokioJoinSet};
 
 use crate::{Handle, JoinError, LocalSet};
 
@@ -32,7 +28,8 @@ impl<T> JoinSet<T> {
 
     /// Returns all active tasks and all queued tasks
     pub fn len(&self) -> usize {
-        self.num_active_tasks.load(Relaxed) + self.num_inactive_tasks.load(Relaxed)
+        // TODO: add a third atomic and use all three here
+        self.inner_join_set.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -43,7 +40,7 @@ impl<T> JoinSet<T> {
 }
 impl<T: 'static> JoinSet<T> {
     fn wrap_task<F>(&self, task: F) -> impl Future<Output = T> + 'static
-        where
+    where
         F: Future<Output = T> + 'static,
     {
         self.num_inactive_tasks.fetch_add(1, Relaxed);
@@ -69,12 +66,12 @@ impl<T: 'static> JoinSet<T> {
     }
 
     fn wrap_blocking_task<F>(&self, task: F) -> impl FnOnce() -> T + Send + 'static
-        where
+    where
         F: FnOnce() -> T + Send + 'static,
         T: Send,
     {
         self.num_inactive_tasks.fetch_add(1, Relaxed);
-        
+
         let task_semaphore = self.active_semaphore.clone();
         let task_inactive_count = self.num_inactive_tasks.clone();
         let task_active_count = self.num_active_tasks.clone();
@@ -122,7 +119,8 @@ impl<T: 'static> JoinSet<T> {
     where
         F: Future<Output = T> + 'static,
     {
-        self.inner_join_set.spawn_local_on(self.wrap_task(task), local_set)
+        self.inner_join_set
+            .spawn_local_on(self.wrap_task(task), local_set)
     }
 
     pub fn spawn_blocking<F>(&mut self, f: F) -> AbortHandle
@@ -130,7 +128,8 @@ impl<T: 'static> JoinSet<T> {
         F: FnOnce() -> T + Send + 'static,
         T: Send,
     {
-        self.inner_join_set.spawn_blocking(self.wrap_blocking_task(f))
+        self.inner_join_set
+            .spawn_blocking(self.wrap_blocking_task(f))
     }
 
     pub fn spawn_blocking_on<F>(&mut self, f: F, handle: &Handle) -> AbortHandle
@@ -138,7 +137,8 @@ impl<T: 'static> JoinSet<T> {
         F: FnOnce() -> T + Send + 'static,
         T: Send,
     {
-        self.inner_join_set.spawn_blocking_on(self.wrap_blocking_task(f), handle)
+        self.inner_join_set
+            .spawn_blocking_on(self.wrap_blocking_task(f), handle)
     }
 
     pub async fn join_next(&mut self) -> Option<Result<T, JoinError>> {
