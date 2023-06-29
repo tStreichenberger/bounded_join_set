@@ -5,11 +5,12 @@ use std::{
     sync::Arc,
 };
 
-use tokio::{sync::{mpsc, Semaphore}, task::JoinSet as TokioJoinSet};
-
-use crate::{
-    AbortHandle, DispatcherResponse, Handle, JoinError, LocalSet,
+use tokio::{
+    sync::{mpsc, Semaphore},
+    task::JoinSet as TokioJoinSet,
 };
+
+use crate::{AbortHandle, DispatcherResponse, Handle, JoinError, LocalSet};
 
 pub struct JoinSet<T> {
     num_inactive_tasks: Arc<AtomicUsize>,
@@ -22,7 +23,6 @@ pub struct JoinSet<T> {
 
 impl<T> JoinSet<T> {
     pub fn new(concurrency: usize) -> Self {
-
         let (response_sender, response_receiver) = mpsc::unbounded_channel();
 
         Self {
@@ -118,7 +118,6 @@ impl<T: 'static> JoinSet<T> {
 
         //TODO: might be able to do normal abort handle
         AbortHandle
-
     }
 
     pub fn spawn_local_on<F>(&mut self, task: F, local_set: &LocalSet) -> AbortHandle
