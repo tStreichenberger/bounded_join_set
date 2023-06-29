@@ -2,71 +2,80 @@ use std::{
     fmt,
     future::Future,
     sync::atomic::{AtomicUsize, Ordering::Relaxed},
+    sync::Arc,
 };
 
-use tokio::{sync::mpsc, task::JoinSet as TokioJoinSet};
+use tokio::{sync::{mpsc, Semaphore}, task::JoinSet as TokioJoinSet};
 
 use crate::{
-    AbortHandle, Dispatcher, DispatcherRequest, DispatcherResponse, Handle, JoinError, LocalSet,
+    AbortHandle, DispatcherResponse, Handle, JoinError, LocalSet,
 };
 
 pub struct JoinSet<T> {
-    num_tasks: AtomicUsize,
-    request_sender: mpsc::UnboundedSender<DispatcherRequest<T>>,
+    num_inactive_tasks: Arc<AtomicUsize>,
+    num_active_tasks: Arc<AtomicUsize>,
+    response_sender: mpsc::UnboundedSender<DispatcherResponse<T>>,
     response_receiver: mpsc::UnboundedReceiver<DispatcherResponse<T>>,
+    active_semaphore: Arc<Semaphore>,
+    inner_join_set: TokioJoinSet<()>,
 }
 
 impl<T> JoinSet<T> {
-    pub fn new(concurrency: usize) -> Self
-    where
-        T: Send + 'static, // TODO: Remove send from here. This should not need to be send in the case of spawn local
-    {
-        let (request_sender, request_receiver) = mpsc::unbounded_channel();
+    pub fn new(concurrency: usize) -> Self {
+
         let (response_sender, response_receiver) = mpsc::unbounded_channel();
 
-        let dispatcher = Dispatcher {
-            concurrency,
-            request_receiver,
-            response_sender,
-            join_set: TokioJoinSet::new(),
-        };
-
-        // TODO: confirm this gets cleaned up after join_set drop (unless detach_all is called)
-        tokio::spawn(dispatcher.start());
-
         Self {
-            num_tasks: AtomicUsize::new(0),
-            request_sender,
+            num_inactive_tasks: Arc::new(AtomicUsize::new(0)),
+            num_active_tasks: Arc::new(AtomicUsize::new(0)),
+            response_sender,
             response_receiver,
+            inner_join_set: TokioJoinSet::new(),
+            active_semaphore: Arc::new(Semaphore::new(concurrency)),
         }
     }
 
     /// Returns all active tasks and all queued tasks
-    /// TODO: add more counters so we can keep track of queued vs active vs completed
     pub fn len(&self) -> usize {
-        self.num_tasks.load(Relaxed)
+        self.num_active_tasks.load(Relaxed) + self.num_inactive_tasks.load(Relaxed)
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
-
 impl<T: 'static> JoinSet<T> {
     pub fn spawn<F>(&mut self, task: F) -> AbortHandle
     where
         F: Future<Output = T> + Send + 'static,
         T: Send,
     {
-        // increment internal counter to keep track of len
-        self.num_tasks.fetch_add(1, Relaxed);
+        self.num_inactive_tasks.fetch_add(1, Relaxed);
 
-        // Send future to channel
-        let request = DispatcherRequest::new(task);
-        // TODO: Error here means dispatcher is dead. Think about what this means. probably panic
-        _ = self.request_sender.send(request);
+        let task_semaphore = self.active_semaphore.clone();
+        let task_inactive_count = self.num_inactive_tasks.clone();
+        let task_active_count = self.num_active_tasks.clone();
+        let task_response_channel = self.response_sender.clone();
 
-        // TODO: construct abort handle
+        let wrapped_task = async move {
+            // SAFETY: error here means the semaphore is closed which is currently not logically possible
+            let _permit = task_semaphore.acquire_owned().await.unwrap();
+
+            // TODO: consider a drop mechanism for these atomics for good cleanup on panic
+            task_inactive_count.fetch_sub(1, Relaxed);
+            task_active_count.fetch_add(1, Relaxed);
+
+            let output = task.await;
+
+            // TODO: confirm that ignoring this error is okay
+            _ = task_response_channel.send(DispatcherResponse { payload: output });
+
+            task_active_count.fetch_sub(1, Relaxed);
+        };
+
+        self.inner_join_set.spawn(wrapped_task);
+
+        // TODO: might be able to just use regular abort handle
         AbortHandle
     }
 
@@ -82,7 +91,34 @@ impl<T: 'static> JoinSet<T> {
     where
         F: Future<Output = T> + 'static,
     {
-        unimplemented!()
+        self.num_inactive_tasks.fetch_add(1, Relaxed);
+
+        let task_semaphore = self.active_semaphore.clone();
+        let task_inactive_count = self.num_inactive_tasks.clone();
+        let task_active_count = self.num_active_tasks.clone();
+        let task_response_channel = self.response_sender.clone();
+
+        let wrapped_task = async move {
+            // SAFETY: error here means the semaphore is closed which is currently not logically possible
+            let _permit = task_semaphore.acquire_owned().await.unwrap();
+
+            // TODO: consider a drop mechanism for these atomics for good cleanup on panic
+            task_inactive_count.fetch_sub(1, Relaxed);
+            task_active_count.fetch_add(1, Relaxed);
+
+            let output = task.await;
+
+            // TODO: confirm that ignoring this error is okay
+            _ = task_response_channel.send(DispatcherResponse { payload: output });
+
+            task_active_count.fetch_sub(1, Relaxed);
+        };
+
+        self.inner_join_set.spawn_local(wrapped_task);
+
+        //TODO: might be able to do normal abort handle
+        AbortHandle
+
     }
 
     pub fn spawn_local_on<F>(&mut self, task: F, local_set: &LocalSet) -> AbortHandle
@@ -116,8 +152,8 @@ impl<T: 'static> JoinSet<T> {
         // wait on receive channel from dispatcher
         let response = self.response_receiver.recv().await?;
 
-        // decrement length counter
-        self.num_tasks.fetch_sub(1, Relaxed);
+        // // decrement length counter
+        // self.num_tasks.fetch_sub(1, Relaxed);
 
         Some(Ok(response.payload))
     }
