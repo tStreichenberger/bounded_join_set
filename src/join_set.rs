@@ -37,7 +37,7 @@ impl<T> JoinSet<T> {
         }
     }
 
-    /// Returns number of all active tasks, queued tasks, and completed tasks
+    /// Returns number of active tasks, queued tasks, and completed tasks
     pub fn len(&self) -> usize {
         self.inner_join_set.len()
     }
@@ -56,7 +56,7 @@ impl<T> JoinSet<T> {
         self.num_inactive_tasks.load(Ordering::Acquire)
     }
 
-    /// number of tasks that have already been completed
+    /// number of tasks that have already been completed but have not been removed from the join set with [`join_next`](#method.join_next)
     pub fn num_completed(&self) -> usize {
         self.len() - self.num_active() - self.num_queued()
     }
@@ -151,9 +151,11 @@ impl<T> Drop for JoinSet<T> {
 
 impl<T> fmt::Debug for JoinSet<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO: add active tasks and queued tasks here
         f.debug_struct("JoinSet")
             .field("len", &self.len())
+            .field("active_tasks", &self.num_active())
+            .field("queued_tasks", &self.num_queued())
+            .field("num_completed", &self.num_completed())
             .field("concurrency", &self.concurrency)
             .finish()
     }
