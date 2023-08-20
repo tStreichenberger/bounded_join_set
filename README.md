@@ -2,6 +2,17 @@
 
 A Concurrency-Limited JoinSet for Tokio.
 
+<!-- [![Crates.io][crates-badge]][crates-url] -->
+[![MIT licensed][mit-badge]][mit-url]
+[![Build Status][actions-badge]][actions-url]
+
+<!-- [crates-badge]: https://img.shields.io/crates/v/tokio.svg
+[crates-url]: https://crates.io/crates/tokio -->
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[mit-url]: https://github.com/tStreichenberger/bounded_join_set/blob/main/LICENSE
+[actions-badge]: https://github.com/tStreichenberger/bounded_join_set/workflows/Rust/badge.svg
+[actions-url]: https://github.com/tStreichenberger/bounded_join_set/actions?query=branch%3Amain++
+
 <!-- cargo-rdme start -->
 
 The `bounded_join_set` crate provides a simple wrapper around Tokio's `JoinSet` with a configurable concurrency limit.
