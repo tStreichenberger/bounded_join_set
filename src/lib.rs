@@ -42,15 +42,15 @@
 //! - **Simple API**: If you're familiar with Tokio's `JoinSet`, you already know how to use `bounded_join_set`.
 //! - **Resource Management**: Prevents system overloads by controlling the number of concurrently polled tasks.
 //! - **Flexible**: Set your own concurrency limit according to your system's capabilities and requirements.
-//! 
+//!
 //! ## Limitations
 //!
-//! While `bounded_join_set` aims to offer an enhanced concurrency control over Tokio's native `JoinSet`, 
+//! While `bounded_join_set` aims to offer an enhanced concurrency control over Tokio's native `JoinSet`,
 //! there are certain limitations to be aware of:
 //!
-//! - **No `spawn_blocking` Support**: As of the current version, the crate does not support the `spawn_blocking` method 
-//!   provided by Tokio. If your application relies heavily on CPU-bound operations that would benefit from the `spawn_blocking` feature, 
-//!   you'll need to manage that separately from this crate. We are looking into extending support for this in future releases, 
+//! - **No `spawn_blocking` Support**: As of the current version, the crate does not support the `spawn_blocking` method
+//!   provided by Tokio. If your application relies heavily on CPU-bound operations that would benefit from the `spawn_blocking` feature,
+//!   you'll need to manage that separately from this crate. We are looking into extending support for this in future releases,
 //!   but there's no definite timeline yet.
 
 mod join_set;
@@ -60,7 +60,6 @@ pub use join_set::*;
 pub mod tokio_exports {
     pub use tokio::{
         runtime::Handle,
-        task::{JoinError, LocalSet, AbortHandle},
-        
+        task::{AbortHandle, JoinError, LocalSet},
     };
 }

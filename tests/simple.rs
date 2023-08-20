@@ -27,16 +27,11 @@ async fn simple() {
     time::sleep(Duration::from_millis(500)).await;
 
     assert_eq!(join_set.num_completed(), 64);
-    
 }
-
-
 
 #[tokio::test]
 async fn test_len() {
     let mut join_set = JoinSet::new(16);
-
-
 
     for _ in 0..100 {
         join_set.spawn(async {});
@@ -46,16 +41,13 @@ async fn test_len() {
 
     assert_eq!(join_set.len(), 100);
 
-
     for _ in 0..5 {
         join_set.join_next().await;
     }
-
 
     assert_eq!(join_set.len(), 95);
 
     while join_set.join_next().await.is_some() {}
 
     assert_eq!(join_set.len(), 0);
-
 }

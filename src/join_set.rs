@@ -3,19 +3,19 @@ use std::{
     future::Future,
     sync::atomic::{AtomicUsize, Ordering},
     sync::Arc,
-    task::{Poll, Context},
+    task::{Context, Poll},
 };
 
 use tokio::{sync::Semaphore, task::JoinSet as TokioJoinSet};
 
-use crate::tokio_exports::{Handle, JoinError, LocalSet, AbortHandle};
+use crate::tokio_exports::{AbortHandle, Handle, JoinError, LocalSet};
 
 /// Same as [`tokio::task::JoinSet`] except the number of actively polled futures is limited to a set concurrency.
-/// 
+///
 /// Does not support [`spawn_blocking`](https://docs.rs/tokio/1.32.0/tokio/task/struct.JoinSet.html#method.spawn_blocking).
-/// 
+///
 /// For any undocumented methods see [`tokio::task::JoinSet`].
-/// 
+///
 /// [`tokio::task::JoinSet`]: https://docs.rs/tokio/1.32.0/tokio/task/struct.JoinSet.html
 pub struct JoinSet<T> {
     num_inactive_tasks: Arc<AtomicUsize>,
@@ -26,7 +26,7 @@ pub struct JoinSet<T> {
 
 impl<T> JoinSet<T> {
     /// Creates a new JoinSet with a set concurrency
-    /// 
+    ///
     /// Panics if concurrency is larger than [`JoinSet::MAX_CONCURRENCY`]
     pub fn new(concurrency: usize) -> Self {
         Self {
@@ -56,7 +56,6 @@ impl<T> JoinSet<T> {
         self.num_inactive_tasks.load(Ordering::Acquire)
     }
 
-
     /// number of tasks that have already been completed
     pub fn num_completed(&self) -> usize {
         self.len() - self.num_active() - self.num_queued()
@@ -64,7 +63,6 @@ impl<T> JoinSet<T> {
 
     pub const MAX_CONCURRENCY: usize = Semaphore::MAX_PERMITS;
 }
-
 
 impl<T: 'static> JoinSet<T> {
     fn wrap_task<F>(&self, task: F) -> impl Future<Output = T> + 'static
@@ -148,9 +146,7 @@ impl<T> Default for JoinSet<T> {
 }
 
 impl<T> Drop for JoinSet<T> {
-    fn drop(&mut self) {
-        
-    }
+    fn drop(&mut self) {}
 }
 
 impl<T> fmt::Debug for JoinSet<T> {
