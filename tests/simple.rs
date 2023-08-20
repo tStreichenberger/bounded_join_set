@@ -5,7 +5,7 @@ use tokio::time::{self, Duration};
 #[tokio::test]
 async fn simple() {
     async fn send_request() {
-        time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
 
     let mut join_set = JoinSet::new(4);
@@ -14,17 +14,17 @@ async fn simple() {
         join_set.spawn(send_request());
     }
 
-    time::sleep(Duration::from_millis(10)).await;
+    time::sleep(Duration::from_millis(1)).await;
 
     assert_eq!(join_set.num_active(), 4);
     assert_eq!(join_set.num_queued(), 60);
     assert_eq!(join_set.num_completed(), 0);
 
-    time::sleep(Duration::from_millis(500)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     assert_eq!(join_set.num_active(), 4);
 
-    time::sleep(Duration::from_millis(500)).await;
+    time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(join_set.num_completed(), 64);
 }
@@ -37,7 +37,7 @@ async fn test_len() {
         join_set.spawn(async {});
     }
 
-    time::sleep(Duration::from_secs(1)).await;
+    time::sleep(Duration::from_millis(10)).await;
 
     assert_eq!(join_set.len(), 100);
 
