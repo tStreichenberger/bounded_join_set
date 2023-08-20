@@ -1,43 +1,61 @@
 use bounded_join_set::JoinSet;
 
-use rand::Rng;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-use std::sync::Arc;
+use tokio::time::{self, Duration};
 
 #[tokio::test]
 async fn simple() {
-    let mut join_set = JoinSet::new(16);
-    let num_active = Arc::new(AtomicUsize::new(0));
+    async fn send_request() {
+        time::sleep(Duration::from_millis(50)).await;
+    }
 
-    let mut rng = rand::thread_rng();
+    let mut join_set = JoinSet::new(4);
+
+    for _ in 0..64 {
+        join_set.spawn(send_request());
+    }
+
+    time::sleep(Duration::from_millis(10)).await;
+
+    assert_eq!(join_set.num_active(), 4);
+    assert_eq!(join_set.num_queued(), 60);
+    assert_eq!(join_set.num_completed(), 0);
+
+    time::sleep(Duration::from_millis(500)).await;
+
+    assert_eq!(join_set.num_active(), 4);
+
+    time::sleep(Duration::from_millis(500)).await;
+
+    assert_eq!(join_set.num_completed(), 64);
+    
+}
+
+
+
+#[tokio::test]
+async fn test_len() {
+    let mut join_set = JoinSet::new(16);
+
+
 
     for _ in 0..100 {
-        let num_active = num_active.clone();
-        let jitter_ms = rng.gen_range(0..=1000);
-        join_set.spawn(async move {
-            num_active.fetch_add(1, Relaxed);
-            println!("Starting Task: num_active {}", num_active.load(Relaxed));
-            tokio::time::sleep(tokio::time::Duration::from_millis(1500 + jitter_ms)).await;
-            num_active.fetch_sub(1, Relaxed);
-            println!("Finished Task: num_active {}", num_active.load(Relaxed));
-        });
+        join_set.spawn(async {});
     }
 
-    // sleep for a little before calling join next to confirm that tasks are still processed even if join_next is not waited od
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    time::sleep(Duration::from_secs(1)).await;
 
-    println!("Starting Join Next Loop");
+    assert_eq!(join_set.len(), 100);
 
-    while let Some(r) = join_set.join_next().await {
-        r.unwrap();
+
+    for _ in 0..5 {
+        join_set.join_next().await;
     }
-    println!("Finished Awaiting All");
 
-    join_set.spawn(async {
-        println!("Processing one more after main loop");
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    });
 
-    join_set.join_next().await.unwrap().unwrap();
-    println!("Done!");
+    assert_eq!(join_set.len(), 95);
+
+    while join_set.join_next().await.is_some() {}
+
+    assert_eq!(join_set.len(), 0);
+
 }

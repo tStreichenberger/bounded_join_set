@@ -1,34 +1,44 @@
 use std::{
     fmt,
     future::Future,
-    sync::atomic::{AtomicUsize, Ordering::Relaxed},
+    sync::atomic::{AtomicUsize, Ordering},
     sync::Arc,
+    task::{Poll, Context},
 };
 
-use tokio::{sync::Semaphore, task::AbortHandle, task::JoinSet as TokioJoinSet};
+use tokio::{sync::Semaphore, task::JoinSet as TokioJoinSet};
 
-use crate::{Handle, JoinError, LocalSet};
+use crate::tokio_exports::{Handle, JoinError, LocalSet, AbortHandle};
 
+/// Same as [`tokio::task::JoinSet`] except the number of actively polled futures is limited to a set concurrency.
+/// 
+/// Does not support [`spawn_blocking`](https://docs.rs/tokio/1.32.0/tokio/task/struct.JoinSet.html#method.spawn_blocking).
+/// 
+/// For any undocumented methods see [`tokio::task::JoinSet`].
+/// 
+/// [`tokio::task::JoinSet`]: https://docs.rs/tokio/1.32.0/tokio/task/struct.JoinSet.html
 pub struct JoinSet<T> {
     num_inactive_tasks: Arc<AtomicUsize>,
-    num_active_tasks: Arc<AtomicUsize>,
     active_semaphore: Arc<Semaphore>,
     inner_join_set: TokioJoinSet<T>,
+    concurrency: usize,
 }
 
 impl<T> JoinSet<T> {
+    /// Creates a new JoinSet with a set concurrency
+    /// 
+    /// Panics if concurrency is larger than [`JoinSet::MAX_CONCURRENCY`]
     pub fn new(concurrency: usize) -> Self {
         Self {
             num_inactive_tasks: Arc::new(AtomicUsize::new(0)),
-            num_active_tasks: Arc::new(AtomicUsize::new(0)),
             inner_join_set: TokioJoinSet::new(),
             active_semaphore: Arc::new(Semaphore::new(concurrency)),
+            concurrency,
         }
     }
 
-    /// Returns all active tasks and all queued tasks
+    /// Returns number of all active tasks, queued tasks, and completed tasks
     pub fn len(&self) -> usize {
-        // TODO: add a third atomic and use all three here
         self.inner_join_set.len()
     }
 
@@ -36,57 +46,43 @@ impl<T> JoinSet<T> {
         self.len() == 0
     }
 
-    //TODO: add functions for getting num active, num inactive, num complete
+    /// number of futures actively being polled
+    pub fn num_active(&self) -> usize {
+        self.concurrency - self.active_semaphore.available_permits()
+    }
+
+    /// number of tasks which have been pushed to the join set and are waiting to begin work
+    pub fn num_queued(&self) -> usize {
+        self.num_inactive_tasks.load(Ordering::Acquire)
+    }
+
+
+    /// number of tasks that have already been completed
+    pub fn num_completed(&self) -> usize {
+        self.len() - self.num_active() - self.num_queued()
+    }
+
+    pub const MAX_CONCURRENCY: usize = Semaphore::MAX_PERMITS;
 }
+
+
 impl<T: 'static> JoinSet<T> {
     fn wrap_task<F>(&self, task: F) -> impl Future<Output = T> + 'static
     where
         F: Future<Output = T> + 'static,
     {
-        self.num_inactive_tasks.fetch_add(1, Relaxed);
+        self.num_inactive_tasks.fetch_add(1, Ordering::Release);
 
         let task_semaphore = self.active_semaphore.clone();
         let task_inactive_count = self.num_inactive_tasks.clone();
-        let task_active_count = self.num_active_tasks.clone();
 
         async move {
             // SAFETY: error here means the semaphore is closed which is currently not logically possible
             let _permit = task_semaphore.acquire_owned().await.unwrap();
 
-            // TODO: consider a drop mechanism for these atomics for good cleanup on panic
-            task_inactive_count.fetch_sub(1, Relaxed);
-            task_active_count.fetch_add(1, Relaxed);
+            task_inactive_count.fetch_sub(1, Ordering::Release);
 
             let output = task.await;
-
-            task_active_count.fetch_sub(1, Relaxed);
-
-            output
-        }
-    }
-
-    fn wrap_blocking_task<F>(&self, task: F) -> impl FnOnce() -> T + Send + 'static
-    where
-        F: FnOnce() -> T + Send + 'static,
-        T: Send,
-    {
-        self.num_inactive_tasks.fetch_add(1, Relaxed);
-
-        let task_semaphore = self.active_semaphore.clone();
-        let task_inactive_count = self.num_inactive_tasks.clone();
-        let task_active_count = self.num_active_tasks.clone();
-
-        move || {
-            // SAFETY: error here means the semaphore is closed which is currently not logically possible
-            let _permit = task_semaphore.try_acquire_owned().unwrap(); //TODO: this does not work!!!!!! Need another way. Either spin loop or some blocking notifier
-
-            // TODO: consider a drop mechanism for these atomics for good cleanup on panic
-            task_inactive_count.fetch_sub(1, Relaxed);
-            task_active_count.fetch_add(1, Relaxed);
-
-            let output = task();
-
-            task_active_count.fetch_sub(1, Relaxed);
 
             output
         }
@@ -123,56 +119,46 @@ impl<T: 'static> JoinSet<T> {
             .spawn_local_on(self.wrap_task(task), local_set)
     }
 
-    pub fn spawn_blocking<F>(&mut self, f: F) -> AbortHandle
-    where
-        F: FnOnce() -> T + Send + 'static,
-        T: Send,
-    {
-        self.inner_join_set
-            .spawn_blocking(self.wrap_blocking_task(f))
-    }
-
-    pub fn spawn_blocking_on<F>(&mut self, f: F, handle: &Handle) -> AbortHandle
-    where
-        F: FnOnce() -> T + Send + 'static,
-        T: Send,
-    {
-        self.inner_join_set
-            .spawn_blocking_on(self.wrap_blocking_task(f), handle)
-    }
-
     pub async fn join_next(&mut self) -> Option<Result<T, JoinError>> {
         self.inner_join_set.join_next().await
     }
 
     pub async fn shutdown(&mut self) {
-        unimplemented!()
+        self.inner_join_set.shutdown().await;
     }
 
     pub fn abort_all(&mut self) {
-        unimplemented!()
+        self.inner_join_set.abort_all();
     }
 
     pub fn detach_all(&mut self) {
-        unimplemented!()
+        self.inner_join_set.detach_all();
+    }
+
+    pub fn poll_join_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<T, JoinError>>> {
+        self.inner_join_set.poll_join_next(cx)
+    }
+}
+
+impl<T> Default for JoinSet<T> {
+    /// Default concurrency is 8
+    fn default() -> Self {
+        Self::new(8)
     }
 }
 
 impl<T> Drop for JoinSet<T> {
     fn drop(&mut self) {
-        //TODO:
-    }
-}
-
-impl<T> Default for JoinSet<T> {
-    fn default() -> Self {
-        unimplemented!()
+        
     }
 }
 
 impl<T> fmt::Debug for JoinSet<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO: add active tasks and queued tasks here
-        f.debug_struct("JoinSet").field("len", &self.len()).finish()
+        f.debug_struct("JoinSet")
+            .field("len", &self.len())
+            .field("concurrency", &self.concurrency)
+            .finish()
     }
 }
